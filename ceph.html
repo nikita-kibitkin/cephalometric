@@ -1,0 +1,595 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8"/>
+  <title>Cephalometric Annotator – Pairs same color + white labels</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    html, body { height: 100%; }
+    body { margin: 0; }
+    .noselect { user-select: none; -webkit-user-select: none; }
+    .handle { cursor: grab; }
+    .handle:active { cursor: grabbing; }
+  </style>
+</head>
+<body class="bg-slate-50 text-slate-900">
+  <div class="w-full h-screen flex">
+    <!-- Изображение слева -->
+    <div class="flex-1 overflow-auto bg-slate-100">
+      <div id="stageOuter" class="relative m-2 inline-block origin-top-left">
+        <img id="img" class="block select-none" alt="ceph" style="display:none" draggable="false"/>
+        <svg id="svg" class="absolute inset-0" style="display:none; pointer-events:none"></svg>
+        <svg id="hit" class="absolute inset-0" style="display:none"></svg>
+        <div id="placeholder" class="p-8 text-slate-500 text-sm">
+          Выберите режим в правой панели, загрузите снимок и ставьте точки. Смена режима влияет только на новые точки/группы.
+        </div>
+      </div>
+    </div>
+
+    <!-- Правая панель -->
+    <div class="w-[320px] border-l bg-white flex flex-col text-sm">
+      <div class="p-3 border-b space-y-3">
+        <div class="flex items-center justify-between">
+          <div class="font-semibold text-slate-800">Cephalometric Annotator</div>
+          <div id="modeBadge" class="px-2 py-0.5 rounded text-xs bg-blue-600 text-white">Режим: Пары</div>
+        </div>
+        <div class="flex items-center gap-2">
+          <span class="text-slate-600">Режим:</span>
+          <button id="modePairs" class="px-2.5 py-1 rounded border">Пары</button>
+          <button id="modePolyline" class="px-2.5 py-1 rounded border">Ломаная</button>
+        </div>
+        <label class="inline-flex items-center gap-2 cursor-pointer">
+          <span class="px-2.5 py-1 rounded border bg-slate-800 text-white border-slate-800">Загрузить</span>
+          <input id="fileInput" type="file" accept="image/*" class="hidden"/>
+        </label>
+        <div class="flex items-center gap-2">
+          <label class="text-slate-600">Метка</label>
+          <input id="nextLabel" class="px-2 py-1 border rounded w-28" placeholder="например, N"/>
+        </div>
+        <div class="flex items-center gap-2">
+          <span>Масштаб</span>
+          <input id="zoomRange" type="range" min="0.25" max="3.5" step="0.05" value="1"/>
+          <span id="zoomPct" class="w-12 text-right">100%</span>
+        </div>
+        <div class="flex items-center gap-2">
+          <button id="undoBtn"  class="px-2.5 py-1 rounded border">Undo</button>
+          <button id="clearBtn" class="px-2.5 py-1 rounded border text-rose-600">Очистить</button>
+        </div>
+        <div class="flex flex-wrap items-center gap-2">
+          <button id="exportResultsJsonBtn" class="px-2.5 py-1 rounded border">Результаты JSON</button>
+          <button id="exportResultsCsvBtn"  class="px-2.5 py-1 rounded border">Результаты CSV</button>
+          <button id="exportProjectBtn"     class="px-2.5 py-1 rounded border">Проект</button>
+          <label class="inline-flex items-center gap-2 cursor-pointer">
+            <span class="px-2.5 py-1 rounded border">Импорт</span>
+            <input id="importProjectInput" type="file" accept="application/json" class="hidden"/>
+          </label>
+        </div>
+      </div>
+
+      <div class="p-3 border-b">
+        <div class="font-semibold mb-2">Углы</div>
+        <div id="anglesList" class="space-y-2 max-h-[34vh] overflow-auto pr-1"></div>
+      </div>
+      <div class="p-3 border-b">
+        <div class="font-semibold mb-2">Отрезки</div>
+        <div id="segmentsList" class="space-y-2 max-h-[24vh] overflow-auto pr-1"></div>
+      </div>
+      <div class="p-3 flex-1 overflow-auto">
+        <div class="font-semibold mb-2">Точки</div>
+        <div id="pointsList" class="space-y-2 pr-1"></div>
+      </div>
+    </div>
+  </div>
+
+<script>
+(function(){
+  // ---------- STATE ----------
+  let imageSrc = null;
+  let imgNatural = { w: 0, h: 0 };
+
+  const points = [];  // {id,label,x,y}
+  const groups = [];  // {id, type:'pairs'|'polyline', pointIds:[], createdAt}
+  let currentMode = 'pairs';
+
+  // ---------- DOM ----------
+  const stageOuter = document.getElementById('stageOuter');
+  const imgEl = document.getElementById('img');
+  const svgEl = document.getElementById('svg');
+  const hitEl = document.getElementById('hit');
+  const placeholder = document.getElementById('placeholder');
+
+  const modeBadge = document.getElementById('modeBadge');
+  const modePairsBtn = document.getElementById('modePairs');
+  const modePolylineBtn = document.getElementById('modePolyline');
+
+  const fileInput = document.getElementById('fileInput');
+  const nextLabelEl = document.getElementById('nextLabel');
+  const zoomRange = document.getElementById('zoomRange');
+  const zoomPct = document.getElementById('zoomPct');
+
+  const pointsList = document.getElementById('pointsList');
+  const segmentsList = document.getElementById('segmentsList');
+  const anglesList = document.getElementById('anglesList');
+
+  const exportResultsJsonBtn = document.getElementById('exportResultsJsonBtn');
+  const exportResultsCsvBtn = document.getElementById('exportResultsCsvBtn');
+  const exportProjectBtn = document.getElementById('exportProjectBtn');
+  const importProjectInput = document.getElementById('importProjectInput');
+  const undoBtn = document.getElementById('undoBtn');
+  const clearBtn = document.getElementById('clearBtn');
+
+  // ---------- UTILS ----------
+  const uid = (p='id') => p + '_' + Math.random().toString(36).slice(2,9);
+  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+  const getPointById = id => points.find(p=>p.id===id);
+
+  function vec(a,b){ return {x:b.x-a.x, y:b.y-a.y}; }
+  function len(u){ return Math.hypot(u.x,u.y); }
+  function unit(u){ const L=len(u)||1; return {x:u.x/L, y:u.y/L}; }
+  function dot(u,v){ return u.x*v.x + u.y*v.y; }
+  function angleUnits(u,v){
+    let c = dot(u,v); c = Math.max(-1, Math.min(1, c));
+    return Math.acos(c) * 180/Math.PI;
+  }
+  function angleBetween(p1,p2,p3,p4){ return angleUnits(unit(vec(p1,p2)), unit(vec(p3,p4))); }
+  function normAng(a){ return Math.atan2(Math.sin(a), Math.cos(a)); } // (-π,π]
+  function angDist(a,b){ return Math.abs(normAng(a-b)); }
+  function atan(v){ return Math.atan2(v.y, v.x); }
+
+  function download(filename, text, type='application/json'){
+    const blob = new Blob([text], {type});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = filename; a.click();
+    URL.revokeObjectURL(url);
+  }
+  function setZoom(f){
+    stageOuter.style.transform = `scale(${f})`;
+    zoomPct.textContent = `${(f*100).toFixed(0)}%`;
+  }
+  function clientToImage(evt){
+    const rect = stageOuter.getBoundingClientRect();
+    const z = parseFloat(zoomRange.value);
+    const x = (evt.clientX - rect.left) / z;
+    const y = (evt.clientY - rect.top) / z;
+    return { x: clamp(x, 0, imgNatural.w), y: clamp(y, 0, imgNatural.h) };
+  }
+
+  // цвета пар для режима "Пары"
+  const PAIR_COLORS = ['#0ea5e9','#10b981','#f59e0b','#ef4444','#8b5cf6','#14b8a6','#fb7185','#84cc16'];
+  const pairColor = (pairIdx) => PAIR_COLORS[pairIdx % PAIR_COLORS.length];
+
+  // ---------- GROUPS ----------
+  function activeGroup(){ return groups[groups.length-1] || null; }
+  function ensureGroupForCurrentModeIfNeeded(){
+    const g = activeGroup();
+    if (!g || g.type !== currentMode){
+      groups.push({ id: uid('g'), type: currentMode, pointIds: [], createdAt: Date.now() });
+    }
+  }
+  function addPoint(x,y,label){
+    ensureGroupForCurrentModeIfNeeded();
+    const p = { id: uid('p'), label, x, y };
+    points.push(p);
+    activeGroup().pointIds.push(p.id);
+  }
+  function deletePoint(pid){
+    const pi = points.findIndex(p=>p.id===pid);
+    if (pi>=0) points.splice(pi,1);
+    for (const g of groups){
+      const gi = g.pointIds.indexOf(pid);
+      if (gi>=0){ g.pointIds.splice(gi,1); break; }
+    }
+    for (let i=groups.length-1; i>=0; i--){
+      if (groups[i].pointIds.length===0) groups.splice(i,1);
+      else break;
+    }
+  }
+
+  // ---------- BUILD SEGMENTS / ANGLES ----------
+  function buildSegmentsForGroup(g){
+    const pts = g.pointIds.map(getPointById).filter(Boolean);
+    const segs = [];
+    if (g.type === 'pairs'){
+      // каждые 2 точки -> сегмент; каждые 2 СЕГМЕНТА -> один угол/пара
+      for(let i=0; i+1<pts.length; i+=2){
+        // ВАЖНО: pairIdx по количеству уже добавленных сегментов,
+        // чтобы два подряд идущих сегмента имели один и тот же цвет
+        const pairIdx = Math.floor(segs.length / 2);
+        segs.push({
+          g, idx: segs.length+1,
+          a: pts[i], b: pts[i+1],
+          pairIdx,
+          color: pairColor(pairIdx)
+        });
+      }
+    } else {
+      for(let i=0; i+1<pts.length; i++){
+        segs.push({ g, idx: segs.length+1, a: pts[i], b: pts[i+1], color: '#111827' });
+      }
+    }
+    return segs;
+  }
+
+  function buildAnglesForGroup(g, segs){
+    const angs = [];
+    if (g.type === 'pairs'){
+      for(let i=0; i+1<segs.length; i+=2){
+        const s1 = segs[i], s2 = segs[i+1];
+        // величина угла по лучам наружу: (P2→P1) и (P3→P4)
+        const u = unit(vec(s1.b, s1.a));
+        const v = unit(vec(s2.a, s2.b));
+        const val = angleUnits(u, v);
+        angs.push({ g, idx: (i/2)+1, sA: s1, sB: s2, value: val, color: s1.color });
+      }
+    } else {
+      const pts = g.pointIds.map(getPointById).filter(Boolean);
+      for(let i=1; i+1<pts.length; i++){
+        const v1 = {a: pts[i-1], b: pts[i]};
+        const v2 = {a: pts[i],   b: pts[i+1]};
+        const val = angleBetween(v1.a, v1.b, v2.a, v2.b);
+        angs.push({ g, idx: i, sA: v1, sB: v2, value: val, color: '#0f766e', pivot: pts[i] });
+      }
+    }
+    return angs;
+  }
+
+  // выбор стороны дуги по сумме направлений
+  function arcParamsBySide(th1, th2, sAngle){
+    let d = normAng(th2 - th1);
+    let mid = normAng(th1 + d/2);
+    let midOpp = normAng(mid + Math.PI);
+    if (!Number.isNaN(sAngle)){
+      if (angDist(sAngle, midOpp) < angDist(sAngle, mid)){
+        th1 = normAng(th1 + Math.PI);
+        th2 = normAng(th2 + Math.PI);
+        mid = midOpp;
+      }
+    }
+    d = normAng(th2 - th1);
+    const sweep = d > 0 ? 1 : 0; // малую дугу
+    return { th1, th2, mid, sweep };
+  }
+
+  // ---------- RENDER ----------
+  function render(){
+    svgEl.setAttribute('width', imgNatural.w);
+    svgEl.setAttribute('height', imgNatural.h);
+    hitEl.setAttribute('width', imgNatural.w);
+    hitEl.setAttribute('height', imgNatural.h);
+    svgEl.innerHTML = '';
+    hitEl.innerHTML = '';
+
+    const allSegments = [];
+    const allAngles = [];
+
+    for(const g of groups){
+      const segs = buildSegmentsForGroup(g);
+      const angs = buildAnglesForGroup(g, segs);
+
+      // отрезки
+      for(const s of segs){
+        const line = document.createElementNS('http://www.w3.org/2000/svg','line');
+        line.setAttribute('x1', s.a.x); line.setAttribute('y1', s.a.y);
+        line.setAttribute('x2', s.b.x); line.setAttribute('y2', s.b.y);
+        line.setAttribute('stroke', s.color || '#111827');
+        line.setAttribute('stroke-width','2');
+        line.setAttribute('stroke-linecap','round');
+        svgEl.appendChild(line);
+      }
+
+      // углы
+      for(const a of angs){
+        let pivot, u, v, baseLen, sDir;
+
+        if (g.type === 'pairs'){
+          const P2 = a.sA.b, P3 = a.sB.a;
+          pivot = { x: (P2.x+P3.x)/2, y: (P2.y+P3.y)/2 };
+          u = unit(vec(a.sA.b, a.sA.a));    // P2→P1
+          v = unit(vec(a.sB.a, a.sB.b));    // P3→P4
+          baseLen = Math.min(len(vec(a.sA.a,a.sA.b)), len(vec(a.sB.a,a.sB.b)));
+          sDir = { x: u.x + v.x, y: u.y + v.y };
+        } else {
+          const Pprev = a.sA.a, P = a.sA.b, Pnext = a.sB.b;
+          pivot = P;
+          u = unit(vec(P, Pprev));          // наружу
+          v = unit(vec(P, Pnext));          // наружу
+          baseLen = Math.min(len(vec(Pprev,P)), len(vec(P,Pnext)));
+          sDir = { x: u.x + v.x, y: u.y + v.y };
+        }
+
+        const th1 = Math.atan2(u.y,u.x);
+        const th2 = Math.atan2(v.y,v.x);
+        const sAngle = Math.atan2(sDir.y, sDir.x);
+        const { th1: A1, th2: A2, mid, sweep } = arcParamsBySide(th1, th2, sAngle);
+
+        const r = Math.max(14, Math.min(46, 0.35 * baseLen));
+        const sPt = { x: pivot.x + r*Math.cos(A1), y: pivot.y + r*Math.sin(A1) };
+        const ePt = { x: pivot.x + r*Math.cos(A2), y: pivot.y + r*Math.sin(A2) };
+
+        const path = document.createElementNS('http://www.w3.org/2000/svg','path');
+        const dstr = `M ${sPt.x} ${sPt.y} A ${r} ${r} 0 0 ${sweep} ${ePt.x} ${ePt.y}`;
+        path.setAttribute('d', dstr);
+        path.setAttribute('fill','none');
+        path.setAttribute('stroke', a.color || '#0f766e');
+        path.setAttribute('stroke-width','2');
+        svgEl.appendChild(path);
+
+        // подпись угла — БЕЛАЯ
+        const lp = { x: pivot.x + (r+14)*Math.cos(mid), y: pivot.y + (r+14)*Math.sin(mid) };
+        const label = document.createElementNS('http://www.w3.org/2000/svg','text');
+        label.setAttribute('x', lp.x); label.setAttribute('y', lp.y);
+        label.setAttribute('font-size','13');
+        label.setAttribute('font-family','ui-monospace, SFMono-Regular, Menlo, monospace');
+        label.setAttribute('text-anchor','middle');
+        label.setAttribute('dominant-baseline','middle');
+        label.setAttribute('fill', '#ffffff'); // <-- белый текст
+        label.textContent = a.value.toFixed(2) + '°';
+        svgEl.appendChild(label);
+      }
+
+      allSegments.push(...segs);
+      allAngles.push(...angs);
+    }
+
+    // точки + хэндлы
+    for(const g of groups){
+      for(const pid of g.pointIds){
+        const p = getPointById(pid);
+        if(!p) continue;
+
+        const gEl = document.createElementNS('http://www.w3.org/2000/svg','g');
+        const c = document.createElementNS('http://www.w3.org/2000/svg','circle');
+        c.setAttribute('cx', p.x); c.setAttribute('cy', p.y);
+        c.setAttribute('r','5');
+        c.setAttribute('fill','white');
+        c.setAttribute('stroke','#111827');
+        c.setAttribute('stroke-width','2');
+        gEl.appendChild(c);
+
+        // подпись точки — БЕЛАЯ
+        const t = document.createElementNS('http://www.w3.org/2000/svg','text');
+        t.setAttribute('x', p.x + 8); t.setAttribute('y', p.y - 8);
+        t.setAttribute('font-size','12');
+        t.setAttribute('fill','#ffffff');  // <-- белый
+        t.textContent = p.label || '';
+        gEl.appendChild(t);
+        svgEl.appendChild(gEl);
+
+        const h = document.createElementNS('http://www.w3.org/2000/svg','circle');
+        h.setAttribute('cx', p.x); h.setAttribute('cy', p.y);
+        h.setAttribute('r','10'); h.setAttribute('fill','transparent');
+        h.setAttribute('class','handle');
+        h.addEventListener('mousedown', (e)=>startDrag(e,p));
+        hitEl.appendChild(h);
+      }
+    }
+
+    renderSidePanels(allSegments, allAngles);
+  }
+
+  function renderSidePanels(allSegments, allAngles){
+    // Углы
+    anglesList.innerHTML = '';
+    for(const a of allAngles){
+      const row = document.createElement('div');
+      row.className = 'flex items-center gap-2';
+      const dot = document.createElement('span');
+      dot.className = 'inline-block w-2.5 h-2.5 rounded-full';
+      dot.style.background = a.color || '#0f766e';
+      const txt = document.createElement('div');
+      txt.className = 'font-mono';
+      if (a.g.type === 'pairs'){
+        const sIdx1 = (a.idx-1)*2+1, sIdx2 = (a.idx-1)*2+2;
+        txt.textContent = `∠A${a.idx} (S${sIdx1}, S${sIdx2}) = ${a.value.toFixed(2)}°`;
+      } else {
+        txt.textContent = `∠@верш. ${a.idx} = ${a.value.toFixed(2)}°`;
+      }
+      row.appendChild(dot);
+      row.appendChild(txt);
+      anglesList.appendChild(row);
+    }
+
+    // Отрезки
+    segmentsList.innerHTML = '';
+    for(const s of allSegments){
+      const row = document.createElement('div');
+      row.className = 'flex items-center gap-2';
+      const dot = document.createElement('span');
+      dot.className = 'inline-block w-2.5 h-2.5 rounded-full';
+      dot.style.background = s.color || '#111827';
+      const L = len(vec(s.a,s.b));
+      const txt = document.createElement('div');
+      txt.textContent = `S${s.idx}: ${(s.a.label||'?')}→${(s.b.label||'?')} · ${L.toFixed(1)} px`;
+      row.appendChild(dot);
+      row.appendChild(txt);
+      segmentsList.appendChild(row);
+    }
+
+    // Точки
+    pointsList.innerHTML = '';
+    for(const g of groups){
+      for(const pid of g.pointIds){
+        const p = getPointById(pid);
+        if(!p) continue;
+        const row = document.createElement('div');
+        row.className = 'flex items-center gap-2';
+        const input = document.createElement('input');
+        input.className = 'px-2 py-1 border rounded w-24';
+        input.value = p.label || '';
+        input.addEventListener('input', ()=>{ p.label = input.value; render(); });
+        const coords = document.createElement('div');
+        coords.className = 'text-xs text-slate-500';
+        coords.textContent = `(${p.x.toFixed(1)}, ${p.y.toFixed(1)})`;
+        const del = document.createElement('button');
+        del.textContent = 'удалить';
+        del.className = 'ml-auto text-rose-600 text-xs';
+        del.addEventListener('click', ()=>{ deletePoint(p.id); render(); });
+        row.appendChild(input);
+        row.appendChild(coords);
+        row.appendChild(del);
+        pointsList.appendChild(row);
+      }
+    }
+  }
+
+  // ---------- INTERACTIONS ----------
+  hitEl.addEventListener('mousedown', (evt)=>{
+    if (!imageSrc) return;
+    if (evt.target !== hitEl) return;
+    const p = clientToImage(evt);
+    const label = (nextLabelEl.value || `P${points.length+1}`).trim();
+    addPoint(p.x, p.y, label);
+    nextLabelEl.value = '';
+    render();
+  });
+
+  // Drag
+  let drag = null;
+  function startDrag(evt, point){
+    evt.stopPropagation();
+    const start = clientToImage(evt);
+    drag = { point, dx: start.x - point.x, dy: start.y - point.y };
+    window.addEventListener('mousemove', onDrag);
+    window.addEventListener('mouseup', endDrag);
+  }
+  function onDrag(evt){
+    if (!drag) return;
+    const p = clientToImage(evt);
+    drag.point.x = clamp(p.x - drag.dx, 0, imgNatural.w);
+    drag.point.y = clamp(p.y - drag.dy, 0, imgNatural.h);
+    render();
+  }
+  function endDrag(){
+    drag = null;
+    window.removeEventListener('mousemove', onDrag);
+    window.removeEventListener('mouseup', endDrag);
+  }
+
+  // Файл
+  fileInput.addEventListener('change', (e)=>{
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev)=>{
+      imageSrc = ev.target.result;
+      imgEl.src = imageSrc;
+      imgEl.style.display = 'block';
+      placeholder.style.display = 'none';
+      imgEl.onload = ()=>{
+        imgNatural = { w: imgEl.naturalWidth, h: imgEl.naturalHeight };
+        svgEl.style.display = 'block';
+        hitEl.style.display = 'block';
+        svgEl.setAttribute('width', imgNatural.w);
+        svgEl.setAttribute('height', imgNatural.h);
+        hitEl.setAttribute('width', imgNatural.w);
+        hitEl.setAttribute('height', imgNatural.h);
+        stageOuter.style.width = imgNatural.w + 'px';
+        stageOuter.style.height = imgNatural.h + 'px';
+        // можно очистить или оставить текущие данные; по умолчанию — очищаем:
+        points.length = 0; groups.length = 0;
+        render();
+      };
+    };
+    reader.readAsDataURL(file);
+    e.target.value = '';
+  });
+
+  // Export / Import
+  exportResultsJsonBtn.addEventListener('click', ()=>{
+    const segsAll = groups.flatMap(g => buildSegmentsForGroup(g));
+    const angsAll = groups.flatMap(g => buildAnglesForGroup(g, buildSegmentsForGroup(g)));
+    const results = {
+      meta: { generatedAt: new Date().toISOString() },
+      groups: groups.map(g => ({ id:g.id, type:g.type, pointIndexes: g.pointIds.map(pid => points.findIndex(p=>p.id===pid)+1) })),
+      points: points.map((p, i)=>({ idx:i+1, label:p.label, x:+p.x.toFixed(3), y:+p.y.toFixed(3) })),
+      segments: segsAll.map((s,i)=>({
+        idx: i+1, groupId: s.g.id, aLabel: s.a.label, bLabel: s.b.label,
+        length_px: +len(vec(s.a,s.b)).toFixed(3), color: s.color||null
+      })),
+      angles: angsAll.map((a)=>({
+        groupId: a.g.id, idx: a.idx, value_deg: +a.value.toFixed(6), color: a.color||null, type: a.g.type
+      }))
+    };
+    download('ceph_results.json', JSON.stringify(results, null, 2), 'application/json');
+  });
+  exportResultsCsvBtn.addEventListener('click', ()=>{
+    const segsAll = groups.flatMap(g => buildSegmentsForGroup(g));
+    const angsAll = groups.flatMap(g => buildAnglesForGroup(g, buildSegmentsForGroup(g)));
+    let csv = 'type,idx,fields\n';
+    points.forEach((p,i)=> csv += `point,${i+1},"label=${p.label};x=${p.x.toFixed(3)};y=${p.y.toFixed(3)}"\n`);
+    segsAll.forEach((s,i)=> csv += `segment,${i+1},"group=${s.g.id};a=${s.a.label};b=${s.b.label};length_px=${len(vec(s.a,s.b)).toFixed(3)};color=${s.color||''}"\n`);
+    angsAll.forEach(a=> csv += `angle,${a.idx},"group=${a.g.id};value_deg=${a.value.toFixed(6)};type=${a.g.type};color=${a.color||''}"\n`);
+    download('ceph_results.csv', csv, 'text/csv');
+  });
+  exportProjectBtn.addEventListener('click', ()=>{
+    const data = { version: 7, imageSrc, imgNatural, points, groups };
+    download('ceph_project.json', JSON.stringify(data, null, 2));
+  });
+  importProjectInput.addEventListener('change', (e)=>{
+    const f = e.target.files?.[0];
+    if (!f) return;
+    const r = new FileReader();
+    r.onload = (ev)=>{
+      try{
+        const data = JSON.parse(ev.target.result);
+        if (!data.imageSrc) throw new Error('Invalid file (no imageSrc)');
+        imageSrc = data.imageSrc;
+        imgEl.src = imageSrc;
+        imgEl.style.display = 'block';
+        placeholder.style.display = 'none';
+        imgEl.onload = ()=>{
+          imgNatural = data.imgNatural || { w: imgEl.naturalWidth, h: imgEl.naturalHeight };
+          svgEl.style.display = 'block';
+          hitEl.style.display = 'block';
+          stageOuter.style.width = imgNatural.w + 'px';
+          stageOuter.style.height = imgNatural.h + 'px';
+          points.length = 0; groups.length = 0;
+          (data.points||[]).forEach(p=> points.push({ id:p.id||uid('p'), label:p.label||'', x:p.x, y:p.y }));
+          (data.groups||[]).forEach(g=> groups.push({ id:g.id||uid('g'), type:g.type||'pairs', pointIds:g.pointIds||[], createdAt:g.createdAt||Date.now() }));
+          render();
+        };
+      }catch(err){
+        alert('Не удалось импортировать JSON: ' + err.message);
+      }
+    };
+    r.readAsText(f);
+    e.target.value = '';
+  });
+
+  // Undo / Clear
+  undoBtn.addEventListener('click', ()=>{
+    const g = activeGroup();
+    if (!g || g.pointIds.length===0) return;
+    const lastPid = g.pointIds.pop();
+    deletePoint(lastPid);
+    render();
+  });
+  clearBtn.addEventListener('click', ()=>{
+    points.length = 0;
+    groups.length = 0;
+    render();
+  });
+
+  // Zoom
+  zoomRange.addEventListener('input', ()=> setZoom(parseFloat(zoomRange.value)));
+  setZoom(1);
+
+  // Mode switch (для новых групп)
+  function updateModeUI(){
+    modeBadge.textContent = 'Режим: ' + (currentMode==='pairs' ? 'Пары' : 'Ломаная');
+    const active = 'bg-blue-600 text-white border-blue-600';
+    const norm = 'bg-white text-slate-900 border-slate-300';
+    modePairsBtn.className = 'px-2.5 py-1 rounded border ' + (currentMode==='pairs' ? active : norm);
+    modePolylineBtn.className = 'px-2.5 py-1 rounded border ' + (currentMode==='polyline' ? active : norm);
+  }
+  modePairsBtn.addEventListener('click', ()=>{ currentMode='pairs'; updateModeUI(); });
+  modePolylineBtn.addEventListener('click', ()=>{ currentMode='polyline'; updateModeUI(); });
+  updateModeUI();
+
+})();
+</script>
+</body>
+</html>
+
