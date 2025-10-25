@@ -2,62 +2,106 @@
 <html lang="ru">
 <head>
   <meta charset="utf-8"/>
-  <title>Cephalometric Annotator – Pairs same color + white labels</title>
+  <title>Cephalometric Annotator – pastel + sizing + mobile panel</title>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <script src="https://cdn.tailwindcss.com"></script>
   <style>
-    html, body { height: 100%; }
-    body { margin: 0; }
-    .noselect { user-select: none; -webkit-user-select: none; }
+    html, body { height: 100%; margin: 0; }
     .handle { cursor: grab; }
     .handle:active { cursor: grabbing; }
+    /* Мобильная панель: выезжает поверх */
+    #sidebar { transition: transform .2s ease, width .2s ease; }
+    @media (max-width: 768px){
+      #sidebar {
+        position: fixed; right: 0; top: 0; height: 100vh; width: 86vw;
+        box-shadow: 0 10px 30px rgba(0,0,0,.2);
+        transform: translateX(100%);
+        z-index: 40;
+      }
+      #sidebar[data-open="true"] { transform: translateX(0); }
+      #panelToggle { display: block; }
+    }
+    @media (min-width: 769px){
+      #panelToggle { display: none; }
+    }
   </style>
 </head>
 <body class="bg-slate-50 text-slate-900">
+  <!-- Кнопка показа панели (моб.) -->
+  <button id="panelToggle"
+          class="fixed right-2 top-2 z-50 px-3 py-1 rounded bg-slate-900 text-white text-sm shadow">
+    Панель
+  </button>
+
   <div class="w-full h-screen flex">
-    <!-- Изображение слева -->
+    <!-- Изображение -->
     <div class="flex-1 overflow-auto bg-slate-100">
       <div id="stageOuter" class="relative m-2 inline-block origin-top-left">
         <img id="img" class="block select-none" alt="ceph" style="display:none" draggable="false"/>
         <svg id="svg" class="absolute inset-0" style="display:none; pointer-events:none"></svg>
         <svg id="hit" class="absolute inset-0" style="display:none"></svg>
-        <div id="placeholder" class="p-8 text-slate-500 text-sm">
-          Выберите режим в правой панели, загрузите снимок и ставьте точки. Смена режима влияет только на новые точки/группы.
+        <div id="placeholder" class="p-8 text-slate-500 text-sm max-w-sm">
+          В правой панели выберите режим <b>Пары</b> или <b>Ломаная</b>, загрузите снимок и кликайте точки.
+          Переключение режима влияет только на новые точки/группы. На мобильных панель прячется кнопкой «Панель».
         </div>
       </div>
     </div>
 
-    <!-- Правая панель -->
-    <div class="w-[320px] border-l bg-white flex flex-col text-sm">
+    <!-- Боковая панель -->
+    <div id="sidebar" class="border-l bg-white flex flex-col text-sm" style="width:380px" data-open="true">
       <div class="p-3 border-b space-y-3">
         <div class="flex items-center justify-between">
           <div class="font-semibold text-slate-800">Cephalometric Annotator</div>
           <div id="modeBadge" class="px-2 py-0.5 rounded text-xs bg-blue-600 text-white">Режим: Пары</div>
         </div>
+
+        <!-- Режимы -->
         <div class="flex items-center gap-2">
           <span class="text-slate-600">Режим:</span>
           <button id="modePairs" class="px-2.5 py-1 rounded border">Пары</button>
           <button id="modePolyline" class="px-2.5 py-1 rounded border">Ломаная</button>
         </div>
+
+        <!-- Загрузка -->
         <label class="inline-flex items-center gap-2 cursor-pointer">
           <span class="px-2.5 py-1 rounded border bg-slate-800 text-white border-slate-800">Загрузить</span>
           <input id="fileInput" type="file" accept="image/*" class="hidden"/>
         </label>
+
+        <!-- Метка -->
         <div class="flex items-center gap-2">
           <label class="text-slate-600">Метка</label>
           <input id="nextLabel" class="px-2 py-1 border rounded w-28" placeholder="например, N"/>
         </div>
+
+        <!-- Масштаб изображения -->
         <div class="flex items-center gap-2">
           <span>Масштаб</span>
           <input id="zoomRange" type="range" min="0.25" max="3.5" step="0.05" value="1"/>
           <span id="zoomPct" class="w-12 text-right">100%</span>
         </div>
+
+        <!-- Размер аннотаций -->
+        <div class="flex items-center gap-2">
+          <span>Размер аннотаций</span>
+          <input id="uiScaleRange" type="range" min="0.6" max="1.6" step="0.05" value="0.9"/>
+          <span id="uiScalePct" class="w-12 text-right">90%</span>
+        </div>
+
+        <!-- Ширина панели (десктоп) -->
+        <div class="hidden md:flex items-center gap-2">
+          <span>Ширина панели</span>
+          <input id="panelWidthRange" type="range" min="260" max="560" step="10" value="380"/>
+          <span id="panelWidthPx" class="w-14 text-right">380px</span>
+        </div>
+
+        <!-- Кнопки -->
         <div class="flex items-center gap-2">
           <button id="undoBtn"  class="px-2.5 py-1 rounded border">Undo</button>
           <button id="clearBtn" class="px-2.5 py-1 rounded border text-rose-600">Очистить</button>
         </div>
         <div class="flex flex-wrap items-center gap-2">
-          <button id="exportResultsJsonBtn" class="px-2.5 py-1 rounded border">Результаты JSON</button>
+          <!-- Убрали "Результаты JSON" -->
           <button id="exportResultsCsvBtn"  class="px-2.5 py-1 rounded border">Результаты CSV</button>
           <button id="exportProjectBtn"     class="px-2.5 py-1 rounded border">Проект</button>
           <label class="inline-flex items-center gap-2 cursor-pointer">
@@ -92,12 +136,19 @@
   const groups = [];  // {id, type:'pairs'|'polyline', pointIds:[], createdAt}
   let currentMode = 'pairs';
 
+  // UI scale (влияет на радиусы/толщины/шрифты)
+  const UI_BASE = { r:5, hit:10, stroke:2, arcStroke:2, fontPt:12, fontAng:13, pad:3, arcK:0.35 };
+  let uiScale = 0.9;
+
   // ---------- DOM ----------
   const stageOuter = document.getElementById('stageOuter');
   const imgEl = document.getElementById('img');
   const svgEl = document.getElementById('svg');
   const hitEl = document.getElementById('hit');
   const placeholder = document.getElementById('placeholder');
+
+  const sidebar = document.getElementById('sidebar');
+  const panelToggle = document.getElementById('panelToggle');
 
   const modeBadge = document.getElementById('modeBadge');
   const modePairsBtn = document.getElementById('modePairs');
@@ -107,12 +158,15 @@
   const nextLabelEl = document.getElementById('nextLabel');
   const zoomRange = document.getElementById('zoomRange');
   const zoomPct = document.getElementById('zoomPct');
+  const uiScaleRange = document.getElementById('uiScaleRange');
+  const uiScalePct = document.getElementById('uiScalePct');
+  const panelWidthRange = document.getElementById('panelWidthRange');
+  const panelWidthPx = document.getElementById('panelWidthPx');
 
   const pointsList = document.getElementById('pointsList');
   const segmentsList = document.getElementById('segmentsList');
   const anglesList = document.getElementById('anglesList');
 
-  const exportResultsJsonBtn = document.getElementById('exportResultsJsonBtn');
   const exportResultsCsvBtn = document.getElementById('exportResultsCsvBtn');
   const exportProjectBtn = document.getElementById('exportProjectBtn');
   const importProjectInput = document.getElementById('importProjectInput');
@@ -128,26 +182,18 @@
   function len(u){ return Math.hypot(u.x,u.y); }
   function unit(u){ const L=len(u)||1; return {x:u.x/L, y:u.y/L}; }
   function dot(u,v){ return u.x*v.x + u.y*v.y; }
-  function angleUnits(u,v){
-    let c = dot(u,v); c = Math.max(-1, Math.min(1, c));
-    return Math.acos(c) * 180/Math.PI;
-  }
+  function angleUnits(u,v){ let c = dot(u,v); c = Math.max(-1, Math.min(1, c)); return Math.acos(c) * 180/Math.PI; }
   function angleBetween(p1,p2,p3,p4){ return angleUnits(unit(vec(p1,p2)), unit(vec(p3,p4))); }
   function normAng(a){ return Math.atan2(Math.sin(a), Math.cos(a)); } // (-π,π]
   function angDist(a,b){ return Math.abs(normAng(a-b)); }
   function atan(v){ return Math.atan2(v.y, v.x); }
-
   function download(filename, text, type='application/json'){
     const blob = new Blob([text], {type});
     const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url; a.download = filename; a.click();
+    const a = document.createElement('a'); a.href = url; a.download = filename; a.click();
     URL.revokeObjectURL(url);
   }
-  function setZoom(f){
-    stageOuter.style.transform = `scale(${f})`;
-    zoomPct.textContent = `${(f*100).toFixed(0)}%`;
-  }
+  function setZoom(f){ stageOuter.style.transform = `scale(${f})`; zoomPct.textContent = `${(f*100).toFixed(0)}%`; }
   function clientToImage(evt){
     const rect = stageOuter.getBoundingClientRect();
     const z = parseFloat(zoomRange.value);
@@ -156,9 +202,11 @@
     return { x: clamp(x, 0, imgNatural.w), y: clamp(y, 0, imgNatural.h) };
   }
 
-  // цвета пар для режима "Пары"
-  const PAIR_COLORS = ['#0ea5e9','#10b981','#f59e0b','#ef4444','#8b5cf6','#14b8a6','#fb7185','#84cc16'];
+  // Пастельные цвета для пар
+  const PAIR_COLORS = ['#93c5fd','#86efac','#fcd34d','#fca5a5','#c4b5fd','#5eead4','#f9a8d4','#bef264'];
   const pairColor = (pairIdx) => PAIR_COLORS[pairIdx % PAIR_COLORS.length];
+  const POLY_SEG_COLOR = '#94a3b8'; // пастельный серо-синий
+  const POLY_ARC_COLOR = '#5eead4'; // пастельный бирюзовый
 
   // ---------- GROUPS ----------
   function activeGroup(){ return groups[groups.length-1] || null; }
@@ -187,39 +235,29 @@
     }
   }
 
-  // ---------- BUILD SEGMENTS / ANGLES ----------
+  // ---------- SEGMENTS / ANGLES ----------
   function buildSegmentsForGroup(g){
     const pts = g.pointIds.map(getPointById).filter(Boolean);
     const segs = [];
     if (g.type === 'pairs'){
-      // каждые 2 точки -> сегмент; каждые 2 СЕГМЕНТА -> один угол/пара
       for(let i=0; i+1<pts.length; i+=2){
-        // ВАЖНО: pairIdx по количеству уже добавленных сегментов,
-        // чтобы два подряд идущих сегмента имели один и тот же цвет
-        const pairIdx = Math.floor(segs.length / 2);
-        segs.push({
-          g, idx: segs.length+1,
-          a: pts[i], b: pts[i+1],
-          pairIdx,
-          color: pairColor(pairIdx)
-        });
+        const pairIdx = Math.floor(segs.length / 2); // два сегмента подряд → один цвет
+        segs.push({ g, idx: segs.length+1, a: pts[i], b: pts[i+1], pairIdx, color: pairColor(pairIdx) });
       }
     } else {
       for(let i=0; i+1<pts.length; i++){
-        segs.push({ g, idx: segs.length+1, a: pts[i], b: pts[i+1], color: '#111827' });
+        segs.push({ g, idx: segs.length+1, a: pts[i], b: pts[i+1], color: POLY_SEG_COLOR });
       }
     }
     return segs;
   }
-
   function buildAnglesForGroup(g, segs){
     const angs = [];
     if (g.type === 'pairs'){
       for(let i=0; i+1<segs.length; i+=2){
         const s1 = segs[i], s2 = segs[i+1];
-        // величина угла по лучам наружу: (P2→P1) и (P3→P4)
-        const u = unit(vec(s1.b, s1.a));
-        const v = unit(vec(s2.a, s2.b));
+        const u = unit(vec(s1.b, s1.a)); // P2→P1
+        const v = unit(vec(s2.a, s2.b)); // P3→P4
         const val = angleUnits(u, v);
         angs.push({ g, idx: (i/2)+1, sA: s1, sB: s2, value: val, color: s1.color });
       }
@@ -229,13 +267,12 @@
         const v1 = {a: pts[i-1], b: pts[i]};
         const v2 = {a: pts[i],   b: pts[i+1]};
         const val = angleBetween(v1.a, v1.b, v2.a, v2.b);
-        angs.push({ g, idx: i, sA: v1, sB: v2, value: val, color: '#0f766e', pivot: pts[i] });
+        angs.push({ g, idx: i, sA: v1, sB: v2, value: val, color: POLY_ARC_COLOR, pivot: pts[i] });
       }
     }
     return angs;
   }
 
-  // выбор стороны дуги по сумме направлений
   function arcParamsBySide(th1, th2, sAngle){
     let d = normAng(th2 - th1);
     let mid = normAng(th1 + d/2);
@@ -248,7 +285,7 @@
       }
     }
     d = normAng(th2 - th1);
-    const sweep = d > 0 ? 1 : 0; // малую дугу
+    const sweep = d > 0 ? 1 : 0;
     return { th1, th2, mid, sweep };
   }
 
@@ -261,6 +298,18 @@
     svgEl.innerHTML = '';
     hitEl.innerHTML = '';
 
+    // текущие размеры от uiScale
+    const UI = {
+      r: UI_BASE.r * uiScale,
+      hit: Math.max(10, UI_BASE.hit * Math.max(0.9, uiScale)),
+      stroke: Math.max(1, UI_BASE.stroke * uiScale),
+      arcStroke: Math.max(1, UI_BASE.arcStroke * uiScale),
+      fontPt: Math.max(10, UI_BASE.fontPt * uiScale),
+      fontAng: Math.max(10, UI_BASE.fontAng * uiScale),
+      pad: Math.max(2, UI_BASE.pad * uiScale),
+      arcK: UI_BASE.arcK
+    };
+
     const allSegments = [];
     const allAngles = [];
 
@@ -268,13 +317,13 @@
       const segs = buildSegmentsForGroup(g);
       const angs = buildAnglesForGroup(g, segs);
 
-      // отрезки
+      // сегменты
       for(const s of segs){
         const line = document.createElementNS('http://www.w3.org/2000/svg','line');
         line.setAttribute('x1', s.a.x); line.setAttribute('y1', s.a.y);
         line.setAttribute('x2', s.b.x); line.setAttribute('y2', s.b.y);
-        line.setAttribute('stroke', s.color || '#111827');
-        line.setAttribute('stroke-width','2');
+        line.setAttribute('stroke', s.color);
+        line.setAttribute('stroke-width', String(UI.stroke));
         line.setAttribute('stroke-linecap','round');
         svgEl.appendChild(line);
       }
@@ -293,8 +342,8 @@
         } else {
           const Pprev = a.sA.a, P = a.sA.b, Pnext = a.sB.b;
           pivot = P;
-          u = unit(vec(P, Pprev));          // наружу
-          v = unit(vec(P, Pnext));          // наружу
+          u = unit(vec(P, Pprev));
+          v = unit(vec(P, Pnext));
           baseLen = Math.min(len(vec(Pprev,P)), len(vec(P,Pnext)));
           sDir = { x: u.x + v.x, y: u.y + v.y };
         }
@@ -304,7 +353,7 @@
         const sAngle = Math.atan2(sDir.y, sDir.x);
         const { th1: A1, th2: A2, mid, sweep } = arcParamsBySide(th1, th2, sAngle);
 
-        const r = Math.max(14, Math.min(46, 0.35 * baseLen));
+        const r = Math.max(12, Math.min(46, UI.arcK * baseLen));
         const sPt = { x: pivot.x + r*Math.cos(A1), y: pivot.y + r*Math.sin(A1) };
         const ePt = { x: pivot.x + r*Math.cos(A2), y: pivot.y + r*Math.sin(A2) };
 
@@ -312,21 +361,36 @@
         const dstr = `M ${sPt.x} ${sPt.y} A ${r} ${r} 0 0 ${sweep} ${ePt.x} ${ePt.y}`;
         path.setAttribute('d', dstr);
         path.setAttribute('fill','none');
-        path.setAttribute('stroke', a.color || '#0f766e');
-        path.setAttribute('stroke-width','2');
+        path.setAttribute('stroke', a.color);
+        path.setAttribute('stroke-width', String(UI.arcStroke));
         svgEl.appendChild(path);
 
-        // подпись угла — БЕЛАЯ
-        const lp = { x: pivot.x + (r+14)*Math.cos(mid), y: pivot.y + (r+14)*Math.sin(mid) };
-        const label = document.createElementNS('http://www.w3.org/2000/svg','text');
-        label.setAttribute('x', lp.x); label.setAttribute('y', lp.y);
-        label.setAttribute('font-size','13');
-        label.setAttribute('font-family','ui-monospace, SFMono-Regular, Menlo, monospace');
-        label.setAttribute('text-anchor','middle');
-        label.setAttribute('dominant-baseline','middle');
-        label.setAttribute('fill', '#ffffff'); // <-- белый текст
-        label.textContent = a.value.toFixed(2) + '°';
-        svgEl.appendChild(label);
+        // метка угла: белый текст на цветном фоне
+        const lp = { x: pivot.x + (r+12)*Math.cos(mid), y: pivot.y + (r+12)*Math.sin(mid) };
+        const gLabel = document.createElementNS('http://www.w3.org/2000/svg','g');
+        const text = document.createElementNS('http://www.w3.org/2000/svg','text');
+        text.setAttribute('x', lp.x); text.setAttribute('y', lp.y);
+        text.setAttribute('font-size', String(UI.fontAng));
+        text.setAttribute('font-family','ui-monospace, SFMono-Regular, Menlo, monospace');
+        text.setAttribute('text-anchor','middle');
+        text.setAttribute('dominant-baseline','middle');
+        text.setAttribute('fill', '#ffffff');
+        text.textContent = a.value.toFixed(2) + '°';
+        gLabel.appendChild(text);
+        svgEl.appendChild(gLabel);
+
+        // измеряем bbox текста, рисуем прямоугольник фоном
+        const bb = text.getBBox();
+        const pad = UI.pad + 1;
+        const rect = document.createElementNS('http://www.w3.org/2000/svg','rect');
+        rect.setAttribute('x', String(bb.x - pad));
+        rect.setAttribute('y', String(bb.y - pad));
+        rect.setAttribute('width', String(bb.width + pad*2));
+        rect.setAttribute('height', String(bb.height + pad*2));
+        rect.setAttribute('rx', String(4 * uiScale));
+        rect.setAttribute('fill', a.color);
+        // вставляем под текст
+        gLabel.insertBefore(rect, text);
       }
 
       allSegments.push(...segs);
@@ -336,30 +400,29 @@
     // точки + хэндлы
     for(const g of groups){
       for(const pid of g.pointIds){
-        const p = getPointById(pid);
-        if(!p) continue;
+        const p = getPointById(pid); if(!p) continue;
 
         const gEl = document.createElementNS('http://www.w3.org/2000/svg','g');
         const c = document.createElementNS('http://www.w3.org/2000/svg','circle');
         c.setAttribute('cx', p.x); c.setAttribute('cy', p.y);
-        c.setAttribute('r','5');
+        c.setAttribute('r', String(UI.r));
         c.setAttribute('fill','white');
         c.setAttribute('stroke','#111827');
-        c.setAttribute('stroke-width','2');
+        c.setAttribute('stroke-width', String(Math.max(1, UI.stroke)));
         gEl.appendChild(c);
 
-        // подпись точки — БЕЛАЯ
         const t = document.createElementNS('http://www.w3.org/2000/svg','text');
-        t.setAttribute('x', p.x + 8); t.setAttribute('y', p.y - 8);
-        t.setAttribute('font-size','12');
-        t.setAttribute('fill','#ffffff');  // <-- белый
+        t.setAttribute('x', p.x + 8*uiScale); t.setAttribute('y', p.y - 8*uiScale);
+        t.setAttribute('font-size', String(UI.fontPt));
+        t.setAttribute('fill','#ffffff');  // белый текст по просьбе
         t.textContent = p.label || '';
         gEl.appendChild(t);
         svgEl.appendChild(gEl);
 
         const h = document.createElementNS('http://www.w3.org/2000/svg','circle');
         h.setAttribute('cx', p.x); h.setAttribute('cy', p.y);
-        h.setAttribute('r','10'); h.setAttribute('fill','transparent');
+        h.setAttribute('r', String(UI.hit));
+        h.setAttribute('fill','transparent');
         h.setAttribute('class','handle');
         h.addEventListener('mousedown', (e)=>startDrag(e,p));
         hitEl.appendChild(h);
@@ -377,7 +440,7 @@
       row.className = 'flex items-center gap-2';
       const dot = document.createElement('span');
       dot.className = 'inline-block w-2.5 h-2.5 rounded-full';
-      dot.style.background = a.color || '#0f766e';
+      dot.style.background = a.color;
       const txt = document.createElement('div');
       txt.className = 'font-mono';
       if (a.g.type === 'pairs'){
@@ -386,8 +449,7 @@
       } else {
         txt.textContent = `∠@верш. ${a.idx} = ${a.value.toFixed(2)}°`;
       }
-      row.appendChild(dot);
-      row.appendChild(txt);
+      row.appendChild(dot); row.appendChild(txt);
       anglesList.appendChild(row);
     }
 
@@ -398,12 +460,11 @@
       row.className = 'flex items-center gap-2';
       const dot = document.createElement('span');
       dot.className = 'inline-block w-2.5 h-2.5 rounded-full';
-      dot.style.background = s.color || '#111827';
+      dot.style.background = s.color;
       const L = len(vec(s.a,s.b));
       const txt = document.createElement('div');
       txt.textContent = `S${s.idx}: ${(s.a.label||'?')}→${(s.b.label||'?')} · ${L.toFixed(1)} px`;
-      row.appendChild(dot);
-      row.appendChild(txt);
+      row.appendChild(dot); row.appendChild(txt);
       segmentsList.appendChild(row);
     }
 
@@ -411,8 +472,7 @@
     pointsList.innerHTML = '';
     for(const g of groups){
       for(const pid of g.pointIds){
-        const p = getPointById(pid);
-        if(!p) continue;
+        const p = getPointById(pid); if(!p) continue;
         const row = document.createElement('div');
         row.className = 'flex items-center gap-2';
         const input = document.createElement('input');
@@ -426,15 +486,25 @@
         del.textContent = 'удалить';
         del.className = 'ml-auto text-rose-600 text-xs';
         del.addEventListener('click', ()=>{ deletePoint(p.id); render(); });
-        row.appendChild(input);
-        row.appendChild(coords);
-        row.appendChild(del);
+        row.appendChild(input); row.appendChild(coords); row.appendChild(del);
         pointsList.appendChild(row);
       }
     }
   }
 
   // ---------- INTERACTIONS ----------
+  // Мобильная панель
+  function updateSidebarInitial(){
+    const isMobile = window.matchMedia('(max-width: 768px)').matches;
+    sidebar.dataset.open = isMobile ? 'false' : 'true';
+  }
+  panelToggle.addEventListener('click', ()=>{
+    sidebar.dataset.open = sidebar.dataset.open === 'true' ? 'false' : 'true';
+  });
+  updateSidebarInitial();
+  window.addEventListener('resize', updateSidebarInitial);
+
+  // Клик добавления точки
   hitEl.addEventListener('mousedown', (evt)=>{
     if (!imageSrc) return;
     if (evt.target !== hitEl) return;
@@ -487,7 +557,7 @@
         hitEl.setAttribute('height', imgNatural.h);
         stageOuter.style.width = imgNatural.w + 'px';
         stageOuter.style.height = imgNatural.h + 'px';
-        // можно очистить или оставить текущие данные; по умолчанию — очищаем:
+        // начинаем с пустого состояния
         points.length = 0; groups.length = 0;
         render();
       };
@@ -497,34 +567,17 @@
   });
 
   // Export / Import
-  exportResultsJsonBtn.addEventListener('click', ()=>{
-    const segsAll = groups.flatMap(g => buildSegmentsForGroup(g));
-    const angsAll = groups.flatMap(g => buildAnglesForGroup(g, buildSegmentsForGroup(g)));
-    const results = {
-      meta: { generatedAt: new Date().toISOString() },
-      groups: groups.map(g => ({ id:g.id, type:g.type, pointIndexes: g.pointIds.map(pid => points.findIndex(p=>p.id===pid)+1) })),
-      points: points.map((p, i)=>({ idx:i+1, label:p.label, x:+p.x.toFixed(3), y:+p.y.toFixed(3) })),
-      segments: segsAll.map((s,i)=>({
-        idx: i+1, groupId: s.g.id, aLabel: s.a.label, bLabel: s.b.label,
-        length_px: +len(vec(s.a,s.b)).toFixed(3), color: s.color||null
-      })),
-      angles: angsAll.map((a)=>({
-        groupId: a.g.id, idx: a.idx, value_deg: +a.value.toFixed(6), color: a.color||null, type: a.g.type
-      }))
-    };
-    download('ceph_results.json', JSON.stringify(results, null, 2), 'application/json');
-  });
   exportResultsCsvBtn.addEventListener('click', ()=>{
     const segsAll = groups.flatMap(g => buildSegmentsForGroup(g));
     const angsAll = groups.flatMap(g => buildAnglesForGroup(g, buildSegmentsForGroup(g)));
     let csv = 'type,idx,fields\n';
     points.forEach((p,i)=> csv += `point,${i+1},"label=${p.label};x=${p.x.toFixed(3)};y=${p.y.toFixed(3)}"\n`);
-    segsAll.forEach((s,i)=> csv += `segment,${i+1},"group=${s.g.id};a=${s.a.label};b=${s.b.label};length_px=${len(vec(s.a,s.b)).toFixed(3)};color=${s.color||''}"\n`);
-    angsAll.forEach(a=> csv += `angle,${a.idx},"group=${a.g.id};value_deg=${a.value.toFixed(6)};type=${a.g.type};color=${a.color||''}"\n`);
+    segsAll.forEach((s,i)=> csv += `segment,${i+1},"group=${s.g.id};a=${s.a.label};b=${s.b.label};length_px=${len(vec(s.a,s.b)).toFixed(3)};color=${s.color}"\n`);
+    angsAll.forEach(a=> csv += `angle,${a.idx},"group=${a.g.id};value_deg=${a.value.toFixed(6)};type=${a.g.type};color=${a.color}"\n`);
     download('ceph_results.csv', csv, 'text/csv');
   });
   exportProjectBtn.addEventListener('click', ()=>{
-    const data = { version: 7, imageSrc, imgNatural, points, groups };
+    const data = { version: 8, imageSrc, imgNatural, points, groups, uiScale };
     download('ceph_project.json', JSON.stringify(data, null, 2));
   });
   importProjectInput.addEventListener('change', (e)=>{
@@ -548,6 +601,7 @@
           points.length = 0; groups.length = 0;
           (data.points||[]).forEach(p=> points.push({ id:p.id||uid('p'), label:p.label||'', x:p.x, y:p.y }));
           (data.groups||[]).forEach(g=> groups.push({ id:g.id||uid('g'), type:g.type||'pairs', pointIds:g.pointIds||[], createdAt:g.createdAt||Date.now() }));
+          if (typeof data.uiScale === 'number'){ uiScale = data.uiScale; uiScaleRange.value = uiScale.toFixed(2); uiScalePct.textContent = `${Math.round(uiScale*100)}%`; }
           render();
         };
       }catch(err){
@@ -575,6 +629,20 @@
   // Zoom
   zoomRange.addEventListener('input', ()=> setZoom(parseFloat(zoomRange.value)));
   setZoom(1);
+
+  // UI scale
+  uiScaleRange.addEventListener('input', ()=>{
+    uiScale = parseFloat(uiScaleRange.value);
+    uiScalePct.textContent = `${Math.round(uiScale*100)}%`;
+    render();
+  });
+
+  // Panel width (desktop)
+  panelWidthRange.addEventListener('input', ()=>{
+    const w = parseInt(panelWidthRange.value, 10);
+    sidebar.style.width = w + 'px';
+    panelWidthPx.textContent = w + 'px';
+  });
 
   // Mode switch (для новых групп)
   function updateModeUI(){
